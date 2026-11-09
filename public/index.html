@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FileLab</title>
+<style>
+:root{color-scheme:dark}
+*{box-sizing:border-box}
+body{margin:0;font-family:system-ui,sans-serif;background:#0b0d12;color:#e8eaf0;min-height:100vh}
+.wrap{max-width:480px;margin:8vh auto;padding:24px}
+.wide{max-width:800px}
+h1{margin:0 0 6px}
+.sub{color:#9aa3b5;margin:0 0 18px}
+input,button{width:100%;padding:12px;margin:6px 0;border-radius:10px;border:1px solid #2a3040;background:#141820;color:inherit;font-size:1rem}
+button{background:#4f86ff;border:none;font-weight:600;cursor:pointer}
+button.ghost{background:#1e2430}
+.card{background:#141820;border:1px solid #2a3040;border-radius:14px;padding:16px;margin:12px 0}
+.err{color:#ff6b6b;min-height:1.2em}
+a{color:#7aa2ff}
+.row{display:flex;gap:8px}
+.row input{flex:1;margin:0}
+.drop{border:2px dashed #3a4255;border-radius:12px;padding:20px;text-align:center;color:#9aa3b5;margin:8px 0;cursor:pointer}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script>
+const $=s=>document.querySelector(s);
+let token=localStorage.getItem('fl_token');
+
+async function api(path,opts={}){
+  const res=await fetch(path,{...opts,headers:{'content-type':'application/json',...(token?{authorization:'Bearer '+token}:{}),...(opts.headers||{})}});
+  const data=await res.json().catch(()=>({}));
+  if(!res.ok) throw new Error(data.error||'Error');
+  return data;
+}
+
+function auth(mode='login'){
+  $('#app').innerHTML=`
+  <div class="wrap">
+    <h1>FileLab</h1>
+    <p class="sub">${mode==='login'?'Sign in':'Create a free account'}</p>
+    <div class="err" id="err"></div>
+    ${mode==='signup'?'<input id="name" placeholder="Name">':''}
+    <input id="email" type="email" placeholder="Email">
+    <input id="pass" type="password" placeholder="Password">
+    <button id="go">${mode==='login'?'Sign in':'Create account'}</button>
+    <p style="text-align:center;margin-top:16px">${mode==='login'?'New? <a href="#" id="sw">Create account</a>':'Have an account? <a href="#" id="sw">Sign in</a>'}</p>
+  </div>`;
+  $('#sw').onclick=e=>{e.preventDefault();auth(mode==='login'?'signup':'login')};
+  $('#go').onclick=async()=>{
+    try{
+      const body={email:$('#email').value,password:$('#pass').value};
+      if(mode==='signup') body.name=$('#name').value;
+      const d=await api(mode==='login'?'/api/login':'/api/signup',{method:'POST',body:JSON.stringify(body)});
+      token=d.token; localStorage.setItem('fl_token',token); dash();
+    }catch(e){$('#err').textContent=e.message}
+  };
+}
+
+async function dash(){
+  const me=await api('/api/me').catch(()=>null);
+  if(!me){token=null;localStorage.removeItem('fl_token');return auth()}
+  const {sites}=await api('/api/sites');
+  $('#app').innerHTML=`
+  <div class="wrap wide">
+    <h1>FileLab</h1>
+    <p class="sub">${me.email} · <a href="#" id="out">Sign out</a></p>
+    <div class="card">
+      <strong>New site</strong>
+      <div class="row" style="margin-top:8px">
+        <input id="nn" placeholder="Site name">
+        <button id="create" style="width:auto;padding:12px 16px">Create</button>
+      </div>
+    </div>
+    <div id="list"></div>
+  </div>`;
+  $('#out').onclick=e=>{e.preventDefault();localStorage.removeItem('fl_token');token=null;auth()};
+  $('#create').onclick=async()=>{
+    const name=$('#nn').value.trim(); if(!name)return;
+    await api('/api/sites',{method:'POST',body:JSON.stringify({name})}); dash();
+  };
+  const list=$('#list');
+  sites.forEach(s=>{
+    const c=document.createElement('div'); c.className='card';
+    c.innerHTML=`<strong>${s.name}</strong>
+      <div style="margin:6px 0"><a href="${s.url}" target="_blank">${location.origin}${s.url}</a></div>
+      <div class="drop" data-id="${s.id}">Drop a file or .zip, or click to upload</div>
+      <input type="file" id="f-${s.id}" hidden>
+      <button class="ghost" data-del="${s.id}">Delete</button>`;
+    list.appendChild(c);
+  });
+  list.onclick=async e=>{
+    if(e.target.dataset.del){
+      if(confirm('Delete?')){ await api('/api/sites/'+e.target.dataset.del,{method:'DELETE'}); dash(); }
+    }
+    const d=e.target.closest('.drop'); if(d) $('#f-'+d.dataset.id).click();
+  };
+  list.onchange=async e=>{
+    if(!e.target.files[0]) return;
+    const id=e.target.id.slice(2);
+    const fd=new FormData(); fd.append('file',e.target.files[0]);
+    const res=await fetch('/api/sites/'+id+'/deploy',{method:'POST',headers:{authorization:'Bearer '+token},body:fd});
+    if(!res.ok) return alert('Upload failed');
+    alert('Live!'); dash();
+  };
+}
+
+token ? dash() : auth();
+</script>
+</body>
+</html>
